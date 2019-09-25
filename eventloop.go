@@ -18,7 +18,6 @@ import (
 
 type loop struct {
 	idx         int             // loop index in the server loops list
-	events      Events          // user events
 	poller      *netpoll.Poller // epoll or kqueue
 	packet      []byte          // read packet buffer
 	connections map[int]*conn   // loop connections fd -> conn
@@ -70,10 +69,7 @@ func (l *loop) loopNote(svr *server, note interface{}) error {
 }
 
 func (l *loop) loopRun(svr *server) {
-	defer func() {
-		svr.signalShutdown()
-		svr.wg.Done()
-	}()
+	defer svr.signalShutdown()
 
 	if l.idx == 0 && svr.events.Tick != nil {
 		go l.loopTicker(svr)
@@ -124,8 +120,8 @@ func (l *loop) loopAccept(svr *server, fd int) error {
 		}
 		conn := &conn{fd: nfd,
 			sa:     sa,
-			inBuf:  ringbuffer.New(cacheRingBufferSize),
-			outBuf: ringbuffer.New(cacheRingBufferSize),
+			inBuf:  ringbuffer.New(connRingBufferSize),
+			outBuf: ringbuffer.New(connRingBufferSize),
 			loop:   l,
 		}
 		l.connections[conn.fd] = conn
@@ -158,7 +154,7 @@ func (l *loop) loopUDPRead(svr *server, fd int) error {
 		conn := &conn{
 			localAddr:  svr.ln.lnaddr,
 			remoteAddr: netpoll.SockaddrToUDPAddr(&sa6),
-			inBuf:      ringbuffer.New(cacheRingBufferSize),
+			inBuf:      ringbuffer.New(connRingBufferSize),
 		}
 		_, _ = conn.inBuf.Write(l.packet[:n])
 		out, action := svr.events.React(conn)

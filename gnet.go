@@ -20,6 +20,8 @@ var (
 	ErrReactNil = errors.New("must set up Event.React()")
 )
 
+const connRingBufferSize = 1024
+
 // Action is an action that occurs after the completion of an event.
 type Action int
 
@@ -69,6 +71,13 @@ type Conn interface {
 	ResetBuffer()
 	// AyncWrite writes data asynchronously.
 	AsyncWrite(buf []byte)
+}
+
+type eventLoopGrouper interface {
+	register(*loop)
+	next() *loop
+	iterate(func(int, *loop) bool)
+	len() int
 }
 
 // Events represents the server events for the Serve call.
