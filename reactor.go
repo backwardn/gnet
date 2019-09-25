@@ -23,10 +23,10 @@ const (
 	cacheRingBufferSize = 1024
 )
 
-//type mail struct {
-//	fd   int
-//	conn *conn
-//}
+type socket struct {
+	fd   int
+	conn *conn
+}
 
 type eventConsumer struct {
 	numLoops       int
@@ -54,10 +54,8 @@ func (ec *eventConsumer) Consume(lower, upper int64) {
 		conn.outBuf = ringbuffer.New(cacheRingBufferSize)
 		conn.loop = ec.loop
 
-		ec.loop.connections.Store(conn.fd, conn)
 		ec.onOpened(conn)
-		ec.loop.poller.AddRead(conn.fd)
-		//_ = ec.loop.poller.Trigger(&mail{fd: conn.fd, conn: conn})
+		_ = ec.loop.poller.Trigger(&socket{fd: conn.fd, conn: conn})
 	}
 }
 
@@ -134,8 +132,7 @@ func activateSubReactor(svr *server, loop *loop) {
 			return loop.loopNote(svr, note)
 		}
 
-		v, _ := loop.connections.Load(fd)
-		if c := v.(*conn); c.outBuf.Length() > 0 {
+		if c := loop.connections[fd]; c.outBuf.Length() > 0 {
 			return loop.loopWrite(svr, c)
 		} else {
 			return loop.loopRead(svr, c)

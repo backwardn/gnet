@@ -9,7 +9,6 @@ package gnet
 
 import (
 	"net"
-	"sync"
 	"time"
 
 	"github.com/panjf2000/gnet/netpoll"
@@ -21,13 +20,12 @@ type loop struct {
 	idx         int             // loop index in the server loops list
 	poller      *netpoll.Poller // epoll or kqueue
 	packet      []byte          // read packet buffer
-	connections sync.Map        // loop connections fd -> conn
+	connections map[int]*conn   // loop connections fd -> conn
 }
 
 func (l *loop) loopCloseConn(svr *server, conn *conn, err error) error {
 	l.poller.Delete(conn.fd)
-	//delete(l.connections, conn.fd)
-	l.connections.Delete(conn.fd)
+	delete(l.connections, conn.fd)
 	_ = unix.Close(conn.fd)
 
 	if svr.events.OnClosed != nil {
@@ -55,14 +53,13 @@ func (l *loop) loopNote(svr *server, note interface{}) error {
 		err = v
 	case *conn:
 		// Wake called for connection
-		if val, ok := l.connections.Load(v.fd); !ok || val != v {
+		if val, ok := l.connections[v.fd]; !ok || val != v {
 			return nil // ignore stale wakes
 		}
 		return l.loopWake(svr, v)
-	//case *mail:
-	//	l.fdconns[v.fd] = v.conn
-	//	_ = l.loopOpened(svr, v.conn)
-	//	l.poller.AddRead(v.fd)
+	case *socket:
+		l.connections[v.fd] = v.conn
+		l.poller.AddRead(v.fd)
 	case func():
 		v()
 	}
@@ -83,8 +80,7 @@ func (l *loop) loopRun(svr *server) {
 		if fd == 0 {
 			return l.loopNote(svr, note)
 		}
-		if v, ok := l.connections.Load(fd); ok {
-			c := v.(*conn)
+		if c, ok := l.connections[fd]; ok {
 			switch {
 			case !c.opened:
 				return l.loopOpened(svr, c)
@@ -131,8 +127,7 @@ func (l *loop) loopAccept(svr *server, fd int) error {
 				outBuf: ringbuffer.New(cacheRingBufferSize),
 				loop:   l,
 			}
-			//l.connections[conn.fd] = conn
-			l.connections.Store(conn.fd, conn)
+			l.connections[conn.fd] = conn
 			l.poller.AddReadWrite(conn.fd)
 			return nil
 		}
