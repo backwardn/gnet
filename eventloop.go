@@ -18,9 +18,12 @@ import (
 
 type loop struct {
 	idx         int             // loop index in the server loops list
+	events      Events          // user events
 	poller      *netpoll.Poller // epoll or kqueue
 	packet      []byte          // read packet buffer
 	connections map[int]*conn   // loop connections fd -> conn
+
+	asyncQueue func() // async tasks queue
 }
 
 func (l *loop) loopCloseConn(svr *server, conn *conn, err error) error {

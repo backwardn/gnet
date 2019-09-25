@@ -21,7 +21,7 @@ import (
 )
 
 type server struct {
-	events   Events // user events
+	events   Events 			// user events
 	mainLoop *loop
 	loops    []*loop            // all the loops
 	numLoops int                // number of loops
@@ -43,6 +43,14 @@ func (svr *server) signalShutdown() {
 	svr.cond.L.Lock()
 	svr.cond.Signal()
 	svr.cond.L.Unlock()
+}
+
+func (svr *server) startLoop(loop *loop) {
+	svr.wg.Add(1)
+	go func() {
+		go loop.loopRun(svr)
+		svr.wg.Done()
+	}()
 }
 
 func serve(events Events, listeners []*listener, reusePort bool) error {

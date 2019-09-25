@@ -32,15 +32,14 @@ const (
 	Shutdown
 )
 
-// Options are set when the client opens.
-type Options struct {
-	// TCPKeepAlive (SO_KEEPALIVE) socket option.
-	TCPKeepAlive time.Duration
-}
-
 // Server represents a server context which provides information about the
 // running server and has control functions for managing state.
 type Server struct {
+	// Multicore indicates whether the server will be effectively created with multi-cores, if so,
+	// then you must take care with synchonizing memory between all event callbacks, otherwise,
+	// it will run the server with single thread. The number of threads in the server will be automatically
+	// assigned to the value of runtime.NumCPU().
+	Multicore bool
 	// The addrs parameter is an array of listening addresses that align
 	// with the addr strings passed to the Serve function.
 	Addrs []net.Addr
