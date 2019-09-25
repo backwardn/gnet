@@ -75,11 +75,6 @@ type Conn interface {
 // Each event has an Action return value that is used manage the state
 // of the connection and server.
 type Events struct {
-	// Multicore indicates whether the server will be effectively created with multi-cores, if so,
-	// then you must take care with synchonizing memory between all event callbacks, otherwise,
-	// it will run the server with single thread. The number of threads in the server will be automatically
-	// assigned to the value of runtime.NumCPU().
-	Multicore bool
 	// OnInitComplete fires when the server can accept connections. The server
 	// parameter has information and various utilities.
 	OnInitComplete func(server Server) (action Action)

@@ -57,7 +57,7 @@ func (svr *server) startLoop(loop *loop) {
 func serve(events Events, listener *listener, options *Options) error {
 	// Figure out the correct number of loops/goroutines to use.
 	var numLoops int
-	if events.Multicore {
+	if options.Multicore {
 		numLoops = runtime.NumCPU()
 	} else {
 		numLoops = 1

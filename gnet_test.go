@@ -97,7 +97,6 @@ func testServe(network, addr string, reuseport, multicore, async bool, nclients 
 	var disconnected int32
 
 	var events Events
-	events.Multicore = multicore
 	//events.OnInitComplete = func(srv Server) (action Action) {
 	//	return
 	//}
@@ -169,12 +168,12 @@ func testServe(network, addr string, reuseport, multicore, async bool, nclients 
 		socket := strings.Replace(addr, ":", "socket", 1)
 		_ = os.RemoveAll(socket)
 		defer os.RemoveAll(socket)
-		err = Serve(events, network+"://"+socket)
+		err = Serve(events, network+"://"+socket, WithMulticore(multicore))
 	} else {
 		if reuseport {
-			err = Serve(events, network+"://"+addr, WithReusePort(true))
+			err = Serve(events, network+"://"+addr, WithMulticore(multicore), WithReusePort(true))
 		} else {
-			err = Serve(events, network+"://"+addr)
+			err = Serve(events, network+"://"+addr, WithMulticore(multicore))
 		}
 	}
 	if err != nil {
