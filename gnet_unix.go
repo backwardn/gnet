@@ -21,11 +21,11 @@ import (
 )
 
 type server struct {
-	events   Events 			// user events
+	events   Events // user events
 	mainLoop *loop
 	loops    []*loop            // all the loops
 	numLoops int                // number of loops
-	lns      []*listener        // all the listeners
+	ln       *listener          // all the listeners
 	wg       sync.WaitGroup     // loop close waitgroup
 	cond     *sync.Cond         // shutdown signaler
 	tch      chan time.Duration // ticker channel
@@ -53,7 +53,7 @@ func (svr *server) startLoop(loop *loop) {
 	}()
 }
 
-func serve(events Events, listeners []*listener, reusePort bool) error {
+func serve(events Events, listener *listener) error {
 	// Figure out the correct number of loops/goroutines to use.
 	var numLoops int
 	if events.Multicore {
@@ -62,19 +62,16 @@ func serve(events Events, listeners []*listener, reusePort bool) error {
 		numLoops = 1
 	}
 
-	svr := &server{}
+	svr := new(server)
 	svr.events = events
-	svr.lns = listeners
+	svr.ln = listener
 	svr.cond = sync.NewCond(&sync.Mutex{})
 	svr.tch = make(chan time.Duration)
 
 	if svr.events.OnInitComplete != nil {
 		var server Server
 		server.NumLoops = numLoops
-		server.Addrs = make([]net.Addr, len(listeners))
-		for i, ln := range listeners {
-			server.Addrs[i] = ln.lnaddr
-		}
+		server.Addr = listener.lnaddr
 		action := svr.events.OnInitComplete(server)
 		switch action {
 		case None:
@@ -110,7 +107,7 @@ func serve(events Events, listeners []*listener, reusePort bool) error {
 		}
 	}()
 
-	if reusePort {
+	if listener.opts.reusePort {
 		activateLoops(svr, numLoops)
 	} else {
 		activateReactors(svr, numLoops)
@@ -127,9 +124,7 @@ func activateLoops(svr *server, numLoops int) {
 			packet:      make([]byte, 0xFFFF),
 			connections: make(map[int]*conn),
 		}
-		for _, ln := range svr.lns {
-			loop.poller.AddRead(ln.fd)
-		}
+		loop.poller.AddRead(svr.ln.fd)
 		svr.loops = append(svr.loops, loop)
 	}
 	svr.numLoops = len(svr.loops)
@@ -171,12 +166,10 @@ func activateReactors(svr *server, numLoops int) {
 		idx:    -1,
 		poller: netpoll.OpenPoller(),
 	}
-	for _, ln := range svr.lns {
-		if ln.pconn != nil && loop.packet == nil {
-			loop.packet = make([]byte, 0xFFFF)
-		}
-		loop.poller.AddRead(ln.fd)
+	if svr.ln.pconn != nil && loop.packet == nil {
+		loop.packet = make([]byte, 0xFFFF)
 	}
+	loop.poller.AddRead(svr.ln.fd)
 	svr.mainLoop = loop
 	// Start main reactor...
 	go activateMainReactor(svr)

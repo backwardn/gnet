@@ -108,37 +108,33 @@ func (l *loop) loopTicker(svr *server) {
 }
 
 func (l *loop) loopAccept(svr *server, fd int) error {
-	for i, ln := range svr.lns {
-		if ln.fd == fd {
-			if ln.pconn != nil {
-				return l.loopUDPRead(svr, i, fd)
-			}
-			nfd, sa, err := unix.Accept(fd)
-			if err != nil {
-				if err == unix.EAGAIN {
-					return nil
-				}
-				return err
-			}
-			if err := unix.SetNonblock(nfd, true); err != nil {
-				return err
-			}
-			conn := &conn{fd: nfd,
-				sa:     sa,
-				lnidx:  i,
-				inBuf:  ringbuffer.New(cacheRingBufferSize),
-				outBuf: ringbuffer.New(cacheRingBufferSize),
-				loop:   l,
-			}
-			l.connections[conn.fd] = conn
-			l.poller.AddReadWrite(conn.fd)
-			return nil
+	if fd == svr.ln.fd {
+		if svr.ln.pconn != nil {
+			return l.loopUDPRead(svr, fd)
 		}
+		nfd, sa, err := unix.Accept(fd)
+		if err != nil {
+			if err == unix.EAGAIN {
+				return nil
+			}
+			return err
+		}
+		if err := unix.SetNonblock(nfd, true); err != nil {
+			return err
+		}
+		conn := &conn{fd: nfd,
+			sa:     sa,
+			inBuf:  ringbuffer.New(cacheRingBufferSize),
+			outBuf: ringbuffer.New(cacheRingBufferSize),
+			loop:   l,
+		}
+		l.connections[conn.fd] = conn
+		l.poller.AddReadWrite(conn.fd)
 	}
 	return nil
 }
 
-func (l *loop) loopUDPRead(svr *server, lnidx, fd int) error {
+func (l *loop) loopUDPRead(svr *server, fd int) error {
 	n, sa, err := unix.Recvfrom(fd, l.packet, 0)
 	if err != nil || n == 0 {
 		return nil
@@ -160,8 +156,7 @@ func (l *loop) loopUDPRead(svr *server, lnidx, fd int) error {
 			sa6 = *sa
 		}
 		conn := &conn{
-			addrIndex:  lnidx,
-			localAddr:  svr.lns[lnidx].lnaddr,
+			localAddr:  svr.ln.lnaddr,
 			remoteAddr: netpoll.SockaddrToUDPAddr(&sa6),
 			inBuf:      ringbuffer.New(cacheRingBufferSize),
 		}
@@ -183,14 +178,13 @@ func (l *loop) loopUDPRead(svr *server, lnidx, fd int) error {
 
 func (l *loop) loopOpened(svr *server, conn *conn) error {
 	conn.opened = true
-	conn.addrIndex = conn.lnidx
-	conn.localAddr = svr.lns[conn.lnidx].lnaddr
+	conn.localAddr = svr.ln.lnaddr
 	conn.remoteAddr = netpoll.SockaddrToTCPOrUnixAddr(conn.sa)
 	if svr.events.OnOpened != nil {
 		out, opts, action := svr.events.OnOpened(conn)
 		conn.action = action
 		if opts.TCPKeepAlive > 0 {
-			if _, ok := svr.lns[conn.lnidx].ln.(*net.TCPListener); ok {
+			if _, ok := svr.ln.ln.(*net.TCPListener); ok {
 				sniffError(netpoll.SetKeepAlive(conn.fd, int(opts.TCPKeepAlive/time.Second)))
 			}
 		}

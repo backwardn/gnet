@@ -7,6 +7,7 @@ package gnet
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -15,7 +16,7 @@ import (
 	"github.com/panjf2000/gnet/netpoll"
 )
 
-var	(
+var (
 	ErrClosing  = errors.New("closing")
 	ErrReactNil = errors.New("must set up Event.React()")
 )
@@ -42,7 +43,7 @@ type Server struct {
 	Multicore bool
 	// The addrs parameter is an array of listening addresses that align
 	// with the addr strings passed to the Serve function.
-	Addrs []net.Addr
+	Addr net.Addr
 	// NumLoops is the number of loops that the server is using.
 	NumLoops int
 }
@@ -53,8 +54,6 @@ type Conn interface {
 	Context() interface{}
 	// SetContext sets a user-defined context.
 	SetContext(interface{})
-	// AddrIndex is the index of server address that was passed to the Serve call.
-	AddrIndex() int
 	// LocalAddr is the connection's local socket address.
 	LocalAddr() net.Addr
 	// RemoteAddr is the connection's remote peer address.
@@ -119,54 +118,45 @@ type Events struct {
 //  unix  - Unix Domain Socket
 //
 // The "tcp" network scheme is assumed when one is not specified.
-func Serve(events Events, addr ...string) error {
-	var lns []*listener
-	defer func() {
-		for _, ln := range lns {
-			ln.close()
-		}
-	}()
-
+func Serve(events Events, addr string) error {
 	if events.React == nil {
 		return ErrReactNil
 	}
 
-	var reusePort bool
-	for _, addr := range addr {
-		var ln listener
-		ln.network, ln.addr, ln.opts = parseAddr(addr)
-		if ln.network == "unix" {
-			sniffError(os.RemoveAll(ln.addr))
-		}
-		reusePort = reusePort || ln.opts.reusePort
-		var err error
-		if ln.network == "udp" {
-			if ln.opts.reusePort {
-				ln.pconn, err = netpoll.ReusePortListenPacket(ln.network, ln.addr)
-			} else {
-				ln.pconn, err = net.ListenPacket(ln.network, ln.addr)
-			}
-		} else {
-			if ln.opts.reusePort {
-				ln.ln, err = netpoll.ReusePortListen(ln.network, ln.addr)
-			} else {
-				ln.ln, err = net.Listen(ln.network, ln.addr)
-			}
-		}
-		if err != nil {
-			return err
-		}
-		if ln.pconn != nil {
-			ln.lnaddr = ln.pconn.LocalAddr()
-		} else {
-			ln.lnaddr = ln.ln.Addr()
-		}
-		if err := ln.system(); err != nil {
-			return err
-		}
-		lns = append(lns, &ln)
+	var ln listener
+	defer ln.close()
+
+	ln.network, ln.addr, ln.opts = parseAddr(addr)
+	fmt.Printf("network: %s, addr: %s\n", ln.network, ln.addr)
+	if ln.network == "unix" {
+		sniffError(os.RemoveAll(ln.addr))
 	}
-	return serve(events, lns, reusePort)
+	var err error
+	if ln.network == "udp" {
+		if ln.opts.reusePort {
+			ln.pconn, err = netpoll.ReusePortListenPacket(ln.network, ln.addr)
+		} else {
+			ln.pconn, err = net.ListenPacket(ln.network, ln.addr)
+		}
+	} else {
+		if ln.opts.reusePort {
+			ln.ln, err = netpoll.ReusePortListen(ln.network, ln.addr)
+		} else {
+			ln.ln, err = net.Listen(ln.network, ln.addr)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if ln.pconn != nil {
+		ln.lnaddr = ln.pconn.LocalAddr()
+	} else {
+		ln.lnaddr = ln.ln.Addr()
+	}
+	if err := ln.system(); err != nil {
+		return err
+	}
+	return serve(events, &ln)
 }
 
 type listener struct {

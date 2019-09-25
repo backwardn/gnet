@@ -91,28 +91,23 @@ func activateMainReactor(svr *server) {
 			return svr.mainLoop.loopNote(svr, note)
 		}
 
-		for i, ln := range svr.lns {
-			if ln.fd == fd {
-				if ln.pconn != nil {
-					return svr.mainLoop.loopUDPRead(svr, i, fd)
-				}
-				nfd, sa, err := unix.Accept(fd)
-				if err != nil {
-					if err == unix.EAGAIN {
-						return nil
-					}
-					return err
-				}
-				if err := unix.SetNonblock(nfd, true); err != nil {
-					return err
-				}
-				conn := &conn{fd: nfd, sa: sa, lnidx: i}
-				sequence = writer.Reserve(1)
-				connRingBuffer[sequence&connRingBufferMask] = conn
-				writer.Commit(sequence, sequence)
+		if svr.ln.pconn != nil {
+			return svr.mainLoop.loopUDPRead(svr, fd)
+		}
+		nfd, sa, err := unix.Accept(fd)
+		if err != nil {
+			if err == unix.EAGAIN {
 				return nil
 			}
+			return err
 		}
+		if err := unix.SetNonblock(nfd, true); err != nil {
+			return err
+		}
+		conn := &conn{fd: nfd, sa: sa}
+		sequence = writer.Reserve(1)
+		connRingBuffer[sequence&connRingBufferMask] = conn
+		writer.Commit(sequence, sequence)
 		return nil
 	})
 }
