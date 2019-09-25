@@ -8,6 +8,14 @@ import "time"
 
 type Option func(opts *Options)
 
+func initOptions(options ...Option) *Options {
+	opts := new(Options)
+	for _, option := range options {
+		option(opts)
+	}
+	return opts
+}
+
 // Options are set when the client opens.
 type Options struct {
 	// Multicore indicates whether the server will be effectively created with multi-cores, if so,

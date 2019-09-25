@@ -23,8 +23,9 @@ import (
 type server struct {
 	events   Events // user events
 	mainLoop *loop
-	loops    []*loop            // all the loops
-	numLoops int                // number of loops
+	loops    []*loop // all the loops
+	numLoops int     // number of loops
+	opts     *Options
 	ln       *listener          // all the listeners
 	wg       sync.WaitGroup     // loop close waitgroup
 	cond     *sync.Cond         // shutdown signaler
@@ -53,7 +54,7 @@ func (svr *server) startLoop(loop *loop) {
 	}()
 }
 
-func serve(events Events, listener *listener) error {
+func serve(events Events, listener *listener, options *Options) error {
 	// Figure out the correct number of loops/goroutines to use.
 	var numLoops int
 	if events.Multicore {
@@ -67,6 +68,7 @@ func serve(events Events, listener *listener) error {
 	svr.ln = listener
 	svr.cond = sync.NewCond(&sync.Mutex{})
 	svr.tch = make(chan time.Duration)
+	svr.opts = options
 
 	if svr.events.OnInitComplete != nil {
 		var server Server
@@ -107,7 +109,7 @@ func serve(events Events, listener *listener) error {
 		}
 	}()
 
-	if listener.opts.reusePort {
+	if options.ReusePort {
 		activateLoops(svr, numLoops)
 	} else {
 		activateReactors(svr, numLoops)

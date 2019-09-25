@@ -7,7 +7,6 @@ package gnet
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -118,7 +117,7 @@ type Events struct {
 //  unix  - Unix Domain Socket
 //
 // The "tcp" network scheme is assumed when one is not specified.
-func Serve(events Events, addr string) error {
+func Serve(events Events, addr string, opts ...Option) error {
 	if events.React == nil {
 		return ErrReactNil
 	}
@@ -126,20 +125,21 @@ func Serve(events Events, addr string) error {
 	var ln listener
 	defer ln.close()
 
-	ln.network, ln.addr, ln.opts = parseAddr(addr)
-	fmt.Printf("network: %s, addr: %s\n", ln.network, ln.addr)
+	options := initOptions(opts...)
+
+	ln.network, ln.addr = parseAddr(addr)
 	if ln.network == "unix" {
 		sniffError(os.RemoveAll(ln.addr))
 	}
 	var err error
 	if ln.network == "udp" {
-		if ln.opts.reusePort {
+		if options.ReusePort {
 			ln.pconn, err = netpoll.ReusePortListenPacket(ln.network, ln.addr)
 		} else {
 			ln.pconn, err = net.ListenPacket(ln.network, ln.addr)
 		}
 	} else {
-		if ln.opts.reusePort {
+		if options.ReusePort {
 			ln.ln, err = netpoll.ReusePortListen(ln.network, ln.addr)
 		} else {
 			ln.ln, err = net.Listen(ln.network, ln.addr)
@@ -156,51 +156,25 @@ func Serve(events Events, addr string) error {
 	if err := ln.system(); err != nil {
 		return err
 	}
-	return serve(events, &ln)
+	return serve(events, &ln, options)
 }
 
 type listener struct {
 	ln      net.Listener
 	lnaddr  net.Addr
 	pconn   net.PacketConn
-	opts    addrOpts
 	f       *os.File
 	fd      int
 	network string
 	addr    string
 }
 
-type addrOpts struct {
-	reusePort bool
-}
-
-func parseAddr(addr string) (network, address string, opts addrOpts) {
+func parseAddr(addr string) (network, address string) {
 	network = "tcp"
 	address = addr
-	opts.reusePort = false
 	if strings.Contains(address, "://") {
 		network = strings.Split(address, "://")[0]
 		address = strings.Split(address, "://")[1]
-	}
-	q := strings.Index(address, "?")
-	if q != -1 {
-		for _, part := range strings.Split(address[q+1:], "&") {
-			kv := strings.Split(part, "=")
-			if len(kv) == 2 {
-				switch kv[0] {
-				case "reuseport":
-					if len(kv[1]) != 0 {
-						switch kv[1][0] {
-						default:
-							opts.reusePort = kv[1][0] >= '1' && kv[1][0] <= '9'
-						case 'T', 't', 'Y', 'y':
-							opts.reusePort = true
-						}
-					}
-				}
-			}
-		}
-		address = address[:q]
 	}
 	return
 }
