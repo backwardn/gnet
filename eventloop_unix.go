@@ -204,8 +204,10 @@ func (el *eventloop) handleAction(c *conn, action Action) error {
 	case None:
 		return nil
 	case Close:
+		_ = el.loopWrite(c)
 		return el.loopCloseConn(c, nil)
 	case Shutdown:
+		_ = el.loopWrite(c)
 		return errServerShutdown
 	default:
 		return nil
