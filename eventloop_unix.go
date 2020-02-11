@@ -105,8 +105,10 @@ func (el *eventloop) loopRead(c *conn) error {
 		switch action {
 		case None:
 		case Close:
+			_ = el.loopWrite(c)
 			return el.loopCloseConn(c, nil)
 		case Shutdown:
+			_ = el.loopWrite(c)
 			return errServerShutdown
 		}
 		if !c.opened {
