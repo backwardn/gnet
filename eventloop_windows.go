@@ -101,7 +101,7 @@ func (el *eventloop) loopRead(ti *tcpIn) (err error) {
 			return errServerShutdown
 		}
 		if err != nil {
-			return el.loopClose(c)
+			return el.loopError(c, err)
 		}
 	}
 	_, _ = c.inboundBuffer.Write(c.buffer.Bytes())
@@ -180,12 +180,13 @@ func (el *eventloop) loopError(c *stdConn, err error) (e error) {
 }
 
 func (el *eventloop) loopWake(c *stdConn) error {
-	if _, ok := el.connections[c]; !ok {
-		return nil // ignore stale wakes.
-	}
+	//if co, ok := el.connections[c]; !ok || co != c {
+	//	return nil // ignore stale wakes.
+	//}
 	out, action := el.eventHandler.React(nil, c)
 	if out != nil {
-		_, _ = c.conn.Write(out)
+		frame, _ := el.codec.Encode(c, out)
+		_, _ = c.conn.Write(frame)
 	}
 	return el.handleAction(c, action)
 }
