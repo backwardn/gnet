@@ -30,6 +30,14 @@ const (
 	Shutdown
 )
 
+var defaultLogger = Logger(log.New(os.Stderr, "", log.LstdFlags))
+
+// Logger is used for logging formatted messages.
+type Logger interface {
+	// Printf must have the same semantics as log.Printf.
+	Printf(format string, args ...interface{})
+}
+
 // Server represents a server context which provides information about the
 // running server and has control functions for managing state.
 type Server struct {
@@ -39,15 +47,15 @@ type Server struct {
 	// assigned to the value of runtime.NumCPU().
 	Multicore bool
 
-	// The Addr parameter is an array of listening addresses that align
-	// with the addr strings passed to the Serve function.
+	// The Addr parameter is the listening address that align
+	// with the addr string passed to the Serve function.
 	Addr net.Addr
 
-	// NumLoops is the number of loops that the server is using.
-	NumLoops int
+	// NumEventLoop is the number of event-loops that the server is using.
+	NumEventLoop int
 
-	// ReUsePort indicates whether SO_REUSEPORT is enable.
-	ReUsePort bool
+	// ReusePort indicates whether SO_REUSEPORT is enable.
+	ReusePort bool
 
 	// TCPKeepAlive (SO_KEEPALIVE) socket option.
 	TCPKeepAlive time.Duration
@@ -67,7 +75,7 @@ type Conn interface {
 	// RemoteAddr is the connection's remote peer address.
 	RemoteAddr() (addr net.Addr)
 
-	// Read reads all data from inbound ring-buffer without moving "read" pointer, which means
+	// Read reads all data from inbound ring-buffer and event-loop-buffer without moving "read" pointer, which means
 	// it does not evict the data from ring-buffer actually and those data will present in ring-buffer until the
 	// ResetBuffer method is invoked.
 	Read() (buf []byte)
@@ -75,16 +83,18 @@ type Conn interface {
 	// ResetBuffer resets the inbound ring-buffer, which means all data in the inbound ring-buffer has been evicted.
 	ResetBuffer()
 
+	// ReadN reads bytes with the given length from inbound ring-buffer and event-loop-buffer without moving
+	// "read" pointer, which means it will not evict the data from buffer until the ShiftN method is invoked,
+	// it reads data from the inbound ring-buffer and event-loop-buffer when the length of the available data is equal
+	// to the given "n", otherwise, it will not read any data from the inbound ring-buffer.
+	//
+	// So you should use this method only if you know exactly the length of subsequent TCP stream based on the protocol,
+	// like the Content-Length attribute in an HTTP request which indicates you how much data you should read
+	// from inbound ring-buffer.
+	ReadN(n int) (size int, buf []byte)
+
 	// ShiftN shifts "read" pointer in buffer with the given length.
 	ShiftN(n int) (size int)
-
-	// ReadN reads bytes with the given length from inbound ring-buffer and event-loop-buffer, it would move
-	// "read" pointer, which means it will evict the data from buffer and it can't be revoked (put back to buffer),
-	// it reads data from the inbound ring-buffer and event-loop-buffer when the length of the available data is equal
-	// to the given "n", otherwise, it will not read any data from the inbound ring-buffer. So you should use this
-	// function only if you know exactly the length of subsequent TCP stream based on the protocol, like the
-	// Content-Length attribute in an HTTP request which indicates you how much data you should read from inbound ring-buffer.
-	ReadN(n int) (size int, buf []byte)
 
 	// BufferLength returns the length of available data in the inbound ring-buffer.
 	BufferLength() (size int)
@@ -93,11 +103,11 @@ type Conn interface {
 	//InboundBuffer() *ringbuffer.RingBuffer
 
 	// SendTo writes data for UDP sockets, it allows you to send data back to UDP socket in individual goroutines.
-	SendTo(buf []byte)
+	SendTo(buf []byte) error
 
 	// AsyncWrite writes data to client/connection asynchronously, usually you would invoke it in individual goroutines
 	// instead of the event-loop goroutines.
-	AsyncWrite(buf []byte)
+	AsyncWrite(buf []byte) error
 
 	// Wake triggers a React event for this connection.
 	Wake() error
@@ -204,13 +214,13 @@ func Serve(eventHandler EventHandler, addr string, opts ...Option) error {
 		}
 	}()
 
-	options := initOptions(opts...)
+	options := loadOptions(opts...)
 
 	ln.network, ln.addr = parseAddr(addr)
 	if ln.network == "unix" {
 		sniffError(os.RemoveAll(ln.addr))
 		if runtime.GOOS == "windows" {
-			return errProtocolNotSupported
+			return ErrProtocolNotSupported
 		}
 	}
 	var err error
@@ -253,7 +263,7 @@ func parseAddr(addr string) (network, address string) {
 }
 
 func sniffError(err error) {
-	if err != nil && err != errServerShutdown {
+	if err != nil {
 		log.Println(err)
 	}
 }

@@ -9,7 +9,6 @@ package gnet
 
 import (
 	"errors"
-	"log"
 	"runtime"
 	"sync"
 	"time"
@@ -34,6 +33,7 @@ type server struct {
 	codec            ICodec             // codec for TCP stream
 	loops            []*eventloop       // all the loops
 	loopWG           sync.WaitGroup     // loop close WaitGroup
+	logger           Logger             // customized logger for logging info
 	ticktock         chan time.Duration // ticker channel
 	listenerWG       sync.WaitGroup     // listener close WaitGroup
 	eventHandler     EventHandler       // user eventHandler
@@ -68,8 +68,8 @@ func (svr *server) startListener() {
 	}()
 }
 
-func (svr *server) startLoops(numLoops int) {
-	for i := 0; i < numLoops; i++ {
+func (svr *server) startLoops(numEventLoop int) {
+	for i := 0; i < numEventLoop; i++ {
 		el := &eventloop{
 			ch:           make(chan interface{}, commandBufferSize),
 			idx:          i,
@@ -90,7 +90,7 @@ func (svr *server) startLoops(numLoops int) {
 
 func (svr *server) stop() {
 	// Wait on a signal for shutdown.
-	log.Printf("server is being shutdown with err: %v\n", svr.waitForShutdown())
+	svr.logger.Printf("server is being shutdown with err: %v\n", svr.waitForShutdown())
 
 	// Close listener.
 	svr.ln.close()
@@ -117,11 +117,12 @@ func (svr *server) stop() {
 
 func serve(eventHandler EventHandler, listener *listener, options *Options) (err error) {
 	// Figure out the correct number of loops/goroutines to use.
-	var numCPU int
+	numEventLoop := 1
 	if options.Multicore {
-		numCPU = runtime.NumCPU()
-	} else {
-		numCPU = 1
+		numEventLoop = runtime.NumCPU()
+	}
+	if options.NumEventLoop > 0 {
+		numEventLoop = options.NumEventLoop
 	}
 
 	svr := new(server)
@@ -131,6 +132,12 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) (err
 	svr.subLoopGroup = new(eventLoopGroup)
 	svr.ticktock = make(chan time.Duration, 1)
 	svr.cond = sync.NewCond(&sync.Mutex{})
+	svr.logger = func() Logger {
+		if options.Logger == nil {
+			return defaultLogger
+		}
+		return options.Logger
+	}()
 	svr.codec = func() ICodec {
 		if options.Codec == nil {
 			return new(BuiltInFrameCodec)
@@ -141,8 +148,8 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) (err
 	server := Server{
 		Multicore:    options.Multicore,
 		Addr:         listener.lnaddr,
-		NumLoops:     numCPU,
-		ReUsePort:    options.ReusePort,
+		NumEventLoop: numEventLoop,
+		ReusePort:    options.ReusePort,
 		TCPKeepAlive: options.TCPKeepAlive,
 	}
 	switch svr.eventHandler.OnInitComplete(server) {
@@ -152,7 +159,7 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) (err
 	}
 
 	// Start all loops.
-	svr.startLoops(numCPU)
+	svr.startLoops(numEventLoop)
 	// Start listener.
 	svr.startListener()
 	defer svr.stop()

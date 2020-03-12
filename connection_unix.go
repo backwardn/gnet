@@ -110,8 +110,8 @@ func (c *conn) write(buf []byte) {
 	}
 }
 
-func (c *conn) sendTo(buf []byte) {
-	_ = unix.Sendto(c.fd, buf, 0, c.sa)
+func (c *conn) sendTo(buf []byte) error {
+	return unix.Sendto(c.fd, buf, 0, c.sa)
 }
 
 // ================================= Public APIs of gnet.Conn =================================
@@ -120,7 +120,6 @@ func (c *conn) Read() []byte {
 	if c.inboundBuffer.IsEmpty() {
 		return c.buffer
 	}
-	bytebuffer.Put(c.byteBuffer)
 	c.byteBuffer = c.inboundBuffer.WithByteBuffer(c.buffer)
 	return c.byteBuffer.Bytes()
 }
@@ -132,20 +131,43 @@ func (c *conn) ResetBuffer() {
 	c.byteBuffer = nil
 }
 
-func (c *conn) ShiftN(n int) (size int) {
-	tempBufferLen := len(c.buffer)
+func (c *conn) ReadN(n int) (size int, buf []byte) {
 	inBufferLen := c.inboundBuffer.Length()
+	tempBufferLen := len(c.buffer)
 	if inBufferLen+tempBufferLen < n || n <= 0 {
-		c.ResetBuffer()
 		return
 	}
 	size = n
 	if c.inboundBuffer.IsEmpty() {
-		if n == tempBufferLen {
-			c.buffer = c.buffer[:0]
-		} else {
-			c.buffer = c.buffer[n:]
-		}
+		buf = c.buffer[:n]
+		return
+	}
+	head, tail := c.inboundBuffer.LazyRead(n)
+	c.byteBuffer = bytebuffer.Get()
+	_, _ = c.byteBuffer.Write(head)
+	_, _ = c.byteBuffer.Write(tail)
+	if inBufferLen >= n {
+		buf = c.byteBuffer.Bytes()
+		return
+	}
+
+	restSize := n - inBufferLen
+	_, _ = c.byteBuffer.Write(c.buffer[:restSize])
+	buf = c.byteBuffer.Bytes()
+	return
+}
+
+func (c *conn) ShiftN(n int) (size int) {
+	inBufferLen := c.inboundBuffer.Length()
+	tempBufferLen := len(c.buffer)
+	if inBufferLen+tempBufferLen < n || n <= 0 {
+		c.ResetBuffer()
+		size = inBufferLen + tempBufferLen
+		return
+	}
+	size = n
+	if c.inboundBuffer.IsEmpty() {
+		c.buffer = c.buffer[n:]
 		return
 	}
 	c.byteBuffer.B = c.byteBuffer.B[n:]
@@ -160,47 +182,7 @@ func (c *conn) ShiftN(n int) (size int) {
 	c.inboundBuffer.Reset()
 
 	restSize := n - inBufferLen
-	if restSize == tempBufferLen {
-		c.buffer = c.buffer[:0]
-	} else {
-		c.buffer = c.buffer[restSize:]
-	}
-	return
-}
-
-func (c *conn) ReadN(n int) (size int, buf []byte) {
-	tempBufferLen := len(c.buffer)
-	inBufferLen := c.inboundBuffer.Length()
-	if inBufferLen+tempBufferLen < n || n <= 0 {
-		return
-	}
-	size = n
-	if c.inboundBuffer.IsEmpty() {
-		buf = c.buffer[:n]
-		if n == tempBufferLen {
-			c.buffer = c.buffer[:0]
-		} else {
-			c.buffer = c.buffer[n:]
-		}
-		return
-	}
-	buf, tail := c.inboundBuffer.LazyRead(n)
-	if tail != nil {
-		buf = append(buf, tail...)
-	}
-	if inBufferLen >= n {
-		c.inboundBuffer.Shift(n)
-		return
-	}
-	c.inboundBuffer.Reset()
-
-	restSize := n - inBufferLen
-	buf = append(buf, c.buffer[:restSize]...)
-	if restSize == tempBufferLen {
-		c.buffer = c.buffer[:0]
-	} else {
-		c.buffer = c.buffer[restSize:]
-	}
+	c.buffer = c.buffer[restSize:]
 	return
 }
 
@@ -208,19 +190,21 @@ func (c *conn) BufferLength() int {
 	return c.inboundBuffer.Length() + len(c.buffer)
 }
 
-func (c *conn) AsyncWrite(buf []byte) {
-	if encodedBuf, err := c.codec.Encode(c, buf); err == nil {
-		_ = c.loop.poller.Trigger(func() error {
+func (c *conn) AsyncWrite(buf []byte) (err error) {
+	var encodedBuf []byte
+	if encodedBuf, err = c.codec.Encode(c, buf); err == nil {
+		return c.loop.poller.Trigger(func() error {
 			if c.opened {
 				c.write(encodedBuf)
 			}
 			return nil
 		})
 	}
+	return
 }
 
-func (c *conn) SendTo(buf []byte) {
-	c.sendTo(buf)
+func (c *conn) SendTo(buf []byte) error {
+	return c.sendTo(buf)
 }
 
 func (c *conn) Wake() error {

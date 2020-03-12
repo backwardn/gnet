@@ -94,7 +94,6 @@ func (c *stdConn) Read() []byte {
 		}
 		return c.buffer.Bytes()
 	}
-	bytebuffer.Put(c.byteBuffer)
 	c.byteBuffer = c.inboundBuffer.WithByteBuffer(c.buffer.Bytes())
 	return c.byteBuffer.Bytes()
 }
@@ -106,20 +105,43 @@ func (c *stdConn) ResetBuffer() {
 	c.byteBuffer = nil
 }
 
-func (c *stdConn) ShiftN(n int) (size int) {
-	tempBufferLen := c.buffer.Len()
+func (c *stdConn) ReadN(n int) (size int, buf []byte) {
 	inBufferLen := c.inboundBuffer.Length()
+	tempBufferLen := c.buffer.Len()
 	if inBufferLen+tempBufferLen < n || n <= 0 {
-		c.ResetBuffer()
 		return
 	}
 	size = n
 	if c.inboundBuffer.IsEmpty() {
-		if n == tempBufferLen {
-			c.buffer.Reset()
-		} else {
-			c.buffer.B = c.buffer.B[n:]
-		}
+		buf = c.buffer.B[:n]
+		return
+	}
+	head, tail := c.inboundBuffer.LazyRead(n)
+	c.byteBuffer = bytebuffer.Get()
+	_, _ = c.byteBuffer.Write(head)
+	_, _ = c.byteBuffer.Write(tail)
+	if inBufferLen >= n {
+		buf = c.byteBuffer.Bytes()
+		return
+	}
+
+	restSize := n - inBufferLen
+	_, _ = c.byteBuffer.Write(c.buffer.B[:restSize])
+	buf = c.byteBuffer.Bytes()
+	return
+}
+
+func (c *stdConn) ShiftN(n int) (size int) {
+	inBufferLen := c.inboundBuffer.Length()
+	tempBufferLen := c.buffer.Len()
+	if inBufferLen+tempBufferLen < n || n <= 0 {
+		c.ResetBuffer()
+		size = inBufferLen + tempBufferLen
+		return
+	}
+	size = n
+	if c.inboundBuffer.IsEmpty() {
+		c.buffer.B = c.buffer.B[n:]
 		return
 	}
 	c.byteBuffer.B = c.byteBuffer.B[n:]
@@ -134,47 +156,7 @@ func (c *stdConn) ShiftN(n int) (size int) {
 	c.inboundBuffer.Reset()
 
 	restSize := n - inBufferLen
-	if restSize == tempBufferLen {
-		c.buffer.Reset()
-	} else {
-		c.buffer.B = c.buffer.B[restSize:]
-	}
-	return
-}
-
-func (c *stdConn) ReadN(n int) (size int, buf []byte) {
-	tempBufferLen := c.buffer.Len()
-	inBufferLen := c.inboundBuffer.Length()
-	if inBufferLen+tempBufferLen < n || n <= 0 {
-		return
-	}
-	size = n
-	if c.inboundBuffer.IsEmpty() {
-		buf = c.buffer.B[:n]
-		if n == tempBufferLen {
-			c.buffer.Reset()
-		} else {
-			c.buffer.B = c.buffer.B[n:]
-		}
-		return
-	}
-	buf, tail := c.inboundBuffer.LazyRead(n)
-	if tail != nil {
-		buf = append(buf, tail...)
-	}
-	if inBufferLen >= n {
-		c.inboundBuffer.Shift(n)
-		return
-	}
-	c.inboundBuffer.Reset()
-
-	restSize := n - inBufferLen
-	buf = append(buf, c.buffer.B[:restSize]...)
-	if restSize == tempBufferLen {
-		c.buffer.Reset()
-	} else {
-		c.buffer.B = c.buffer.B[restSize:]
-	}
+	c.buffer.B = c.buffer.B[restSize:]
 	return
 }
 
@@ -182,17 +164,20 @@ func (c *stdConn) BufferLength() int {
 	return c.inboundBuffer.Length() + c.buffer.Len()
 }
 
-func (c *stdConn) AsyncWrite(buf []byte) {
-	if encodedBuf, err := c.codec.Encode(c, buf); err == nil {
+func (c *stdConn) AsyncWrite(buf []byte) (err error) {
+	var encodedBuf []byte
+	if encodedBuf, err = c.codec.Encode(c, buf); err == nil {
 		c.loop.ch <- func() error {
 			_, _ = c.conn.Write(encodedBuf)
 			return nil
 		}
 	}
+	return
 }
 
-func (c *stdConn) SendTo(buf []byte) {
-	_, _ = c.loop.svr.ln.pconn.WriteTo(buf, c.remoteAddr)
+func (c *stdConn) SendTo(buf []byte) (err error) {
+	_, err = c.loop.svr.ln.pconn.WriteTo(buf, c.remoteAddr)
+	return
 }
 
 func (c *stdConn) Wake() error {

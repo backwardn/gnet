@@ -8,7 +8,6 @@
 package gnet
 
 import (
-	"log"
 	"runtime"
 	"sync"
 	"time"
@@ -23,6 +22,7 @@ type server struct {
 	once             sync.Once          // make sure only signalShutdown once
 	cond             *sync.Cond         // shutdown signaler
 	codec            ICodec             // codec for TCP stream
+	logger           Logger             // customized logger for logging info
 	ticktock         chan time.Duration // ticker channel
 	mainLoop         *eventloop         // main loop for accepting connections
 	eventHandler     EventHandler       // user eventHandler
@@ -75,9 +75,9 @@ func (svr *server) startReactors() {
 	})
 }
 
-func (svr *server) activateLoops(numLoops int) error {
+func (svr *server) activateLoops(numEventLoop int) error {
 	// Create loops locally and bind the listeners.
-	for i := 0; i < numLoops; i++ {
+	for i := 0; i < numEventLoop; i++ {
 		if p, err := netpoll.OpenPoller(); err == nil {
 			el := &eventloop{
 				idx:          i,
@@ -100,8 +100,8 @@ func (svr *server) activateLoops(numLoops int) error {
 	return nil
 }
 
-func (svr *server) activateReactors(numLoops int) error {
-	for i := 0; i < numLoops; i++ {
+func (svr *server) activateReactors(numEventLoop int) error {
+	for i := 0; i < numEventLoop; i++ {
 		if p, err := netpoll.OpenPoller(); err == nil {
 			el := &eventloop{
 				idx:          i,
@@ -141,11 +141,11 @@ func (svr *server) activateReactors(numLoops int) error {
 	return nil
 }
 
-func (svr *server) start(numCPU int) error {
+func (svr *server) start(numEventLoop int) error {
 	if svr.opts.ReusePort || svr.ln.pconn != nil {
-		return svr.activateLoops(numCPU)
+		return svr.activateLoops(numEventLoop)
 	}
-	return svr.activateReactors(numCPU)
+	return svr.activateReactors(numEventLoop)
 }
 
 func (svr *server) stop() {
@@ -155,7 +155,7 @@ func (svr *server) stop() {
 	// Notify all loops to close by closing all listeners
 	svr.subLoopGroup.iterate(func(i int, el *eventloop) bool {
 		sniffError(el.poller.Trigger(func() error {
-			return errServerShutdown
+			return ErrServerShutdown
 		}))
 		return true
 	})
@@ -163,7 +163,7 @@ func (svr *server) stop() {
 	if svr.mainLoop != nil {
 		svr.ln.close()
 		sniffError(svr.mainLoop.poller.Trigger(func() error {
-			return errServerShutdown
+			return ErrServerShutdown
 		}))
 	}
 
@@ -186,11 +186,12 @@ func (svr *server) stop() {
 
 func serve(eventHandler EventHandler, listener *listener, options *Options) error {
 	// Figure out the correct number of loops/goroutines to use.
-	var numCPU int
+	numEventLoop := 1
 	if options.Multicore {
-		numCPU = runtime.NumCPU()
-	} else {
-		numCPU = 1
+		numEventLoop = runtime.NumCPU()
+	}
+	if options.NumEventLoop > 0 {
+		numEventLoop = options.NumEventLoop
 	}
 
 	svr := new(server)
@@ -200,6 +201,12 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) erro
 	svr.subLoopGroup = new(eventLoopGroup)
 	svr.cond = sync.NewCond(&sync.Mutex{})
 	svr.ticktock = make(chan time.Duration, 1)
+	svr.logger = func() Logger {
+		if options.Logger == nil {
+			return defaultLogger
+		}
+		return options.Logger
+	}()
 	svr.codec = func() ICodec {
 		if options.Codec == nil {
 			return new(BuiltInFrameCodec)
@@ -210,8 +217,8 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) erro
 	server := Server{
 		Multicore:    options.Multicore,
 		Addr:         listener.lnaddr,
-		NumLoops:     numCPU,
-		ReUsePort:    options.ReusePort,
+		NumEventLoop: numEventLoop,
+		ReusePort:    options.ReusePort,
 		TCPKeepAlive: options.TCPKeepAlive,
 	}
 	switch svr.eventHandler.OnInitComplete(server) {
@@ -220,9 +227,9 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) erro
 		return nil
 	}
 
-	if err := svr.start(numCPU); err != nil {
+	if err := svr.start(numEventLoop); err != nil {
 		svr.closeLoops()
-		log.Printf("gnet server is stoping with error: %v\n", err)
+		svr.logger.Printf("gnet server is stoping with error: %v\n", err)
 		return err
 	}
 	defer svr.stop()

@@ -9,7 +9,7 @@ import "time"
 // Option is a function that will set up option.
 type Option func(opts *Options)
 
-func initOptions(options ...Option) *Options {
+func loadOptions(options ...Option) *Options {
 	opts := new(Options)
 	for _, option := range options {
 		option(opts)
@@ -25,6 +25,10 @@ type Options struct {
 	// assigned to the value of runtime.NumCPU().
 	Multicore bool
 
+	// NumEventLoop is set up to start the given number of event-loop goroutine.
+	// Note: Setting up NumEventLoop will override Multicore.
+	NumEventLoop int
+
 	// ReusePort indicates whether to set up the SO_REUSEPORT socket option.
 	ReusePort bool
 
@@ -36,6 +40,9 @@ type Options struct {
 
 	// ICodec encodes and decodes TCP stream.
 	Codec ICodec
+
+	// Logger is the customized logger for logging info, if it is not set, default standard logger from log package is used.
+	Logger Logger
 }
 
 // WithOptions sets up all options.
@@ -45,10 +52,17 @@ func WithOptions(options Options) Option {
 	}
 }
 
-// WithMulticore sets up multi-cores with gnet.
+// WithMulticore sets up multi-cores in gnet server.
 func WithMulticore(multicore bool) Option {
 	return func(opts *Options) {
 		opts.Multicore = multicore
+	}
+}
+
+// WithNumEventLoop sets up NumEventLoop in gnet server.
+func WithNumEventLoop(numEventLoop int) Option {
+	return func(opts *Options) {
+		opts.NumEventLoop = numEventLoop
 	}
 }
 
@@ -77,5 +91,12 @@ func WithTicker(ticker bool) Option {
 func WithCodec(codec ICodec) Option {
 	return func(opts *Options) {
 		opts.Codec = codec
+	}
+}
+
+// WithLogger sets up a customized logger.
+func WithLogger(logger Logger) Option {
+	return func(opts *Options) {
+		opts.Logger = logger
 	}
 }
