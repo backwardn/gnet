@@ -7,7 +7,6 @@
 <a title="Require Go Version" target="_blank" href="https://github.com/panjf2000/gnet"><img src="https://img.shields.io/badge/go-%3E%3D1.9-30dff3?style=flat-square&logo=go"></a>
 <a title="Release" target="_blank" href="https://github.com/panjf2000/gnet/releases"><img src="https://img.shields.io/github/v/release/panjf2000/gnet.svg?color=161823&style=flat-square&logo=smartthings"></a>
 <br/>
-<a title="" target="_blank" href="https://golangci.com/r/github.com/panjf2000/gnet"><img src="https://golangci.com/badges/github.com/panjf2000/gnet.svg"></a>
 <a title="Go Report Card" target="_blank" href="https://goreportcard.com/report/github.com/panjf2000/gnet"><img src="https://goreportcard.com/badge/github.com/panjf2000/gnet?style=flat-square"></a>
 <a title="Doc for gnet" target="_blank" href="https://pkg.go.dev/github.com/panjf2000/gnet?tab=doc"><img src="https://img.shields.io/badge/go.dev-doc-007d9c?style=flat-square&logo=read-the-docs"></a>
 <a title="gnet on Sourcegraph" target="_blank" href="https://sourcegraph.com/github.com/panjf2000/gnet?badge"><img src="https://sourcegraph.com/github.com/panjf2000/gnet/-/badge.svg?style=flat-square"></a>
@@ -29,20 +28,18 @@ English | [🇨🇳中文](README_ZH.md)
 # 🚀 Features
 
 - [x] [High-performance](#-performance) event-loop under networking model of multiple threads/goroutines
-- [x] Built-in load balancing algorithm: Round-Robin
 - [x] Built-in goroutine pool powered by the library [ants](https://github.com/panjf2000/ants)
 - [x] Built-in memory pool with bytes powered by the library [bytebufferpool](https://github.com/valyala/bytebufferpool)
 - [x] Concise APIs
 - [x] Efficient memory usage: Ring-Buffer
-- [x] Supporting multiple protocols/IPC mechanism: TCP, UDP and Unix Domain Socket
-- [x] Supporting two event-driven mechanisms: epoll on Linux and kqueue on FreeBSD
+- [x] Supporting multiple protocols/IPC mechanism: `TCP,` `UDP` and `Unix Domain Socket`
+- [x] Supporting multiple load-balancing algorithms: `Round-Robin`, `Source Addr Hash` and `Least-Connections`
+- [x] Supporting two event-driven mechanisms: `epoll` on Linux and `kqueue` on FreeBSD
 - [x] Supporting asynchronous write operation
 - [x] Flexible ticker event
 - [x] SO_REUSEPORT socket option
 - [x] Built-in multiple codecs to encode/decode network frames into/from TCP stream: LineBasedFrameCodec, DelimiterBasedFrameCodec, FixedLengthFrameCodec and LengthFieldBasedFrameCodec, referencing [netty codec](https://netty.io/4.1/api/io/netty/handler/codec/package-summary.html), also supporting customized codecs
 - [x] Supporting Windows platform with ~~event-driven mechanism of IOCP~~ Go stdlib: net
-- [ ] Additional load-balancing algorithms: Random, Least-Connections, Consistent-hashing and so on
-- [ ] TLS support
 - [ ] Implementation of `gnet` Client
 
 # 💡 Key Designs
@@ -79,6 +76,7 @@ and it works as the following sequence diagram:
 <p align="center">
 <img alt="multi-reactors" src="https://raw.githubusercontent.com/panjf2000/illustrations/master/go/multi-reactors%2Bthread-pool-sequence-diagram.png">
 </p>
+
 `gnet` implements the networking model:『multiple reactors with thread/goroutine pool』by the aid of a high-performance goroutine pool called [ants](https://github.com/panjf2000/ants) that allows you to manage and recycle a massive number of goroutines in your concurrent programs, the full features and usages in `ants` are documented [here](https://pkg.go.dev/github.com/panjf2000/ants/v2?tab=doc).
 
 `gnet` integrates `ants` and provides the `pool.goroutine.Default()` method that you can call to instantiate a `ants` pool where you are able to put your blocking code logic and call the function `gnet.Conn.AsyncWrite([]byte)` to send out data asynchronously after you finish the blocking process and get the output data, which makes the goroutine of event-loop non-blocking.
@@ -893,7 +891,9 @@ The `gnet.WithMulticore(true)` indicates whether the server will be effectively 
 
 ## Load Balancing
 
-The current built-in load balancing algorithm in `gnet` is Round-Robin.
+`gnet` currently supports three load balancing algorithms: `Round-Robin`, `Source Addr Hash` and `Least-Connections`, you are able to decide which algorithm to use by passing the functional option `LB` (RoundRobin/LeastConnections/SourceAddrHash) to `gnet.Serve`.
+
+If the load balancing algorithm is not specified explicitly, `gnet` will use `Round-Robin` by default.
 
 ## SO_REUSEPORT
 
@@ -930,14 +930,14 @@ Go : go1.14.x linux/amd64
 
 ![All language](https://raw.githubusercontent.com/panjf2000/illustrations/master/benchmark/techempower-all.jpg)
 
-This is the top 50 on the framework ranking of all programming languages consists of a total of 376 frameworks from all over the world.
+This is the top 50 on the framework ranking of all programming languages consists of a total of 382 frameworks from all over the world.
 
 
 ![Golang](https://raw.githubusercontent.com/panjf2000/illustrations/master/benchmark/techempower-go.png)
 
 This is the full framework ranking of Golang.
 
-To see the full ranking list, visit [Full ranking list of Plaintext](https://www.techempower.com/benchmarks/#section=test&runid=02692910-4c3f-4c56-a9dc-f0167a4280a4&hw=ph&test=plaintext).
+To see the full ranking list, visit [Full ranking list of Plaintext](https://www.techempower.com/benchmarks/#section=test&runid=c7152e8f-5b33-4ae7-9e89-630af44bc8de&hw=ph&test=plaintext).
 
 ## Contrasts to the similar networking libraries
 
@@ -1011,6 +1011,7 @@ Please read our [Contributing Guidelines](CONTRIBUTING.md) before opening a PR a
 - [Going Infinite, handling 1M websockets connections in Go](https://speakerdeck.com/eranyanay/going-infinite-handling-1m-websockets-connections-in-go)
 - [Go netpoll I/O 多路复用构建原生网络模型之源码深度解析](https://taohuawu.club/go-netpoll-io-multiplexing-reactor)
 - [gnet: 一个轻量级且高性能的 Golang 网络库](https://taohuawu.club/go-event-loop-networking-library-gnet)
+- [最快的 Go 网络框架 gnet 来啦！](https://taohuawu.club/releasing-gnet-v1-with-techempower)
 
 ## JetBrains OS licenses
 

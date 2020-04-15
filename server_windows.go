@@ -31,7 +31,6 @@ type server struct {
 	serr             error              // signal error
 	once             sync.Once          // make sure only signalShutdown once
 	codec            ICodec             // codec for TCP stream
-	loops            []*eventloop       // all the loops
 	loopWG           sync.WaitGroup     // loop close WaitGroup
 	logger           Logger             // customized logger for logging info
 	ticktock         chan time.Duration // ticker channel
@@ -75,7 +74,7 @@ func (svr *server) startLoops(numEventLoop int) {
 			idx:          i,
 			svr:          svr,
 			codec:        svr.codec,
-			connections:  make(map[*stdConn]bool),
+			connections:  make(map[*stdConn]struct{}),
 			eventHandler: svr.eventHandler,
 		}
 		svr.subLoopGroup.register(el)
@@ -112,7 +111,6 @@ func (svr *server) stop() {
 		return true
 	})
 	svr.loopWG.Wait()
-	return
 }
 
 func serve(eventHandler EventHandler, listener *listener, options *Options) (err error) {
@@ -129,7 +127,16 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) (err
 	svr.opts = options
 	svr.eventHandler = eventHandler
 	svr.ln = listener
-	svr.subLoopGroup = new(eventLoopGroup)
+
+	switch options.LB {
+	case RoundRobin:
+		svr.subLoopGroup = new(roundRobinEventLoopGroup)
+	case LeastConnections:
+		svr.subLoopGroup = new(leastConnectionsEventLoopGroup)
+	case SourceAddrHash:
+		svr.subLoopGroup = new(sourceAddrHashEventLoopGroup)
+	}
+
 	svr.ticktock = make(chan time.Duration, 1)
 	svr.cond = sync.NewCond(&sync.Mutex{})
 	svr.logger = func() Logger {
@@ -146,6 +153,7 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) (err
 	}()
 
 	server := Server{
+		svr:          svr,
 		Multicore:    options.Multicore,
 		Addr:         listener.lnaddr,
 		NumEventLoop: numEventLoop,

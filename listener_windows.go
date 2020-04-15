@@ -7,22 +7,34 @@
 
 package gnet
 
-import "os"
+import (
+	"net"
+	"os"
+	"sync"
+)
 
-func (ln *listener) close() {
-	ln.once.Do(func() {
-		if ln.ln != nil {
-			sniffError(ln.ln.Close())
-		}
-		if ln.pconn != nil {
-			sniffError(ln.pconn.Close())
-		}
-		if ln.network == "unix" {
-			sniffError(os.RemoveAll(ln.addr))
-		}
-	})
+type listener struct {
+	ln            net.Listener
+	once          sync.Once
+	pconn         net.PacketConn
+	lnaddr        net.Addr
+	addr, network string
 }
 
 func (ln *listener) system() error {
 	return nil
+}
+
+func (ln *listener) close() {
+	ln.once.Do(func() {
+		if ln.ln != nil {
+			sniffErrorAndLog(ln.ln.Close())
+		}
+		if ln.pconn != nil {
+			sniffErrorAndLog(ln.pconn.Close())
+		}
+		if ln.network == "unix" {
+			sniffErrorAndLog(os.RemoveAll(ln.addr))
+		}
+	})
 }
