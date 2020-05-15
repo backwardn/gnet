@@ -8,26 +8,28 @@
 package gnet
 
 import (
+	"os"
+	"os/signal"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/panjf2000/gnet/internal/netpoll"
 )
 
 type server struct {
-	ln               *listener          // all the listeners
-	wg               sync.WaitGroup     // event-loop close WaitGroup
-	opts             *Options           // options with server
-	once             sync.Once          // make sure only signalShutdown once
-	cond             *sync.Cond         // shutdown signaler
-	codec            ICodec             // codec for TCP stream
-	logger           Logger             // customized logger for logging info
-	ticktock         chan time.Duration // ticker channel
-	mainLoop         *eventloop         // main loop for accepting connections
-	eventHandler     EventHandler       // user eventHandler
-	subLoopGroup     IEventLoopGroup    // loops for handling events
-	subLoopGroupSize int                // number of loops
+	ln           *listener          // all the listeners
+	wg           sync.WaitGroup     // event-loop close WaitGroup
+	opts         *Options           // options with server
+	once         sync.Once          // make sure only signalShutdown once
+	cond         *sync.Cond         // shutdown signaler
+	codec        ICodec             // codec for TCP stream
+	logger       Logger             // customized logger for logging info
+	ticktock     chan time.Duration // ticker channel
+	mainLoop     *eventloop         // main loop for accepting connections
+	eventHandler EventHandler       // user eventHandler
+	subLoopGroup IEventLoopGroup    // loops for handling events
 }
 
 // waitForShutdown waits for a signal to shutdown
@@ -94,7 +96,6 @@ func (svr *server) activateLoops(numEventLoop int) error {
 			return err
 		}
 	}
-	svr.subLoopGroupSize = svr.subLoopGroup.len()
 	// Start loops in background
 	svr.startLoops()
 	return nil
@@ -117,7 +118,6 @@ func (svr *server) activateReactors(numEventLoop int) error {
 			return err
 		}
 	}
-	svr.subLoopGroupSize = svr.subLoopGroup.len()
 	// Start sub reactors.
 	svr.startReactors()
 
@@ -155,7 +155,7 @@ func (svr *server) stop() {
 	// Notify all loops to close by closing all listeners
 	svr.subLoopGroup.iterate(func(i int, el *eventloop) bool {
 		sniffErrorAndLog(el.poller.Trigger(func() error {
-			return ErrServerShutdown
+			return errServerShutdown
 		}))
 		return true
 	})
@@ -163,20 +163,13 @@ func (svr *server) stop() {
 	if svr.mainLoop != nil {
 		svr.ln.close()
 		sniffErrorAndLog(svr.mainLoop.poller.Trigger(func() error {
-			return ErrServerShutdown
+			return errServerShutdown
 		}))
 	}
 
 	// Wait on all loops to complete reading events
 	svr.wg.Wait()
 
-	// Close loops and all outstanding connections
-	svr.subLoopGroup.iterate(func(i int, el *eventloop) bool {
-		for _, c := range el.connections {
-			sniffErrorAndLog(el.loopCloseConn(c, nil))
-		}
-		return true
-	})
 	svr.closeLoops()
 
 	if svr.mainLoop != nil {
@@ -236,6 +229,18 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) erro
 	case Shutdown:
 		return nil
 	}
+	defer svr.eventHandler.OnShutdown(server)
+
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	defer close(shutdown)
+
+	go func() {
+		if <-shutdown == nil {
+			return
+		}
+		svr.signalShutdown()
+	}()
 
 	if err := svr.start(numEventLoop); err != nil {
 		svr.closeLoops()

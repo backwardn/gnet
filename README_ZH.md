@@ -893,7 +893,7 @@ events.Tick = func() (delay time.Duration, action Action){
 
 `gnet` 目前支持三种负载均衡算法：`Round-Robin(轮询)`、`Source Addr Hash(源地址哈希)` 和 `Least-Connections(最少连接数)`，你可以通过传递 functional option 的 `LB` (RoundRobin/LeastConnections/SourceAddrHash) 的值给 `gnet.Serve` 来指定要使用的负载均衡算法。
 
-如果没有显示地指定，那么 `gnet` 将会使用 `Round-Robin` 作为默认的负载均衡算法。
+如果没有显示地指定，那么 `gnet` 将会使用 `Round-Robin` 作为默认的负载均衡算法。
 
 ## SO_REUSEPORT 端口复用
 
@@ -1004,6 +1004,7 @@ GOMAXPROCS=4
 - [ants](https://github.com/panjf2000/ants)
 - [bytebufferpool](https://github.com/valyala/bytebufferpool)
 - [goframe](https://github.com/smallnest/goframe)
+- [ringbuffer](https://github.com/smallnest/ringbuffer)
 
 # 📚 相关文章
 

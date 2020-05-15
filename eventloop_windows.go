@@ -8,7 +8,6 @@
 package gnet
 
 import (
-	"io"
 	"net"
 	"sync/atomic"
 	"time"
@@ -112,7 +111,7 @@ func (el *eventloop) loopRead(ti *tcpIn) (err error) {
 		case Close:
 			return el.loopCloseConn(c)
 		case Shutdown:
-			return ErrServerShutdown
+			return errServerShutdown
 		}
 		if err != nil {
 			return el.loopError(c, err)
@@ -121,11 +120,10 @@ func (el *eventloop) loopRead(ti *tcpIn) (err error) {
 	_, _ = c.inboundBuffer.Write(c.buffer.Bytes())
 	bytebuffer.Put(c.buffer)
 	c.buffer = nil
-	return nil
+	return
 }
 
 func (el *eventloop) loopCloseConn(c *stdConn) error {
-	atomic.StoreInt32(&c.done, 1)
 	return c.conn.SetReadDeadline(time.Now())
 }
 
@@ -134,7 +132,7 @@ func (el *eventloop) loopEgress() {
 	for v := range el.ch {
 		switch v := v.(type) {
 		case error:
-			if v == errCloseConns {
+			if v == errServerShutdown {
 				closed = true
 				for c := range el.connections {
 					_ = el.loopCloseConn(c)
@@ -143,7 +141,7 @@ func (el *eventloop) loopEgress() {
 		case *stderr:
 			_ = el.loopError(v.c, v.err)
 		}
-		if len(el.connections) == 0 && closed {
+		if closed && len(el.connections) == 0 {
 			break
 		}
 	}
@@ -160,7 +158,7 @@ func (el *eventloop) loopTicker() {
 			el.svr.ticktock <- delay
 			switch action {
 			case Shutdown:
-				err = errClosing
+				err = errServerShutdown
 			}
 			return
 		}
@@ -176,17 +174,9 @@ func (el *eventloop) loopError(c *stdConn, err error) (e error) {
 	if e = c.conn.Close(); e == nil {
 		delete(el.connections, c)
 		el.minusConnCount()
-		switch atomic.LoadInt32(&c.done) {
-		case 0: // read error
-			if err != io.EOF {
-				el.svr.logger.Printf("socket: %s with err: %v\n", c.remoteAddr.String(), err)
-			}
-		case 1: // closed
-			el.svr.logger.Printf("socket: %s has been closed by client\n", c.remoteAddr.String())
-		}
 		switch el.eventHandler.OnClosed(c, err) {
 		case Shutdown:
-			return errClosing
+			return errServerShutdown
 		}
 		c.releaseTCP()
 	} else {
@@ -214,7 +204,7 @@ func (el *eventloop) handleAction(c *stdConn, action Action) error {
 	case Close:
 		return el.loopCloseConn(c)
 	case Shutdown:
-		return ErrServerShutdown
+		return errServerShutdown
 	default:
 		return nil
 	}
@@ -228,7 +218,7 @@ func (el *eventloop) loopReadUDP(c *stdConn) error {
 	}
 	switch action {
 	case Shutdown:
-		return errClosing
+		return errServerShutdown
 	}
 	c.releaseUDP()
 	return nil

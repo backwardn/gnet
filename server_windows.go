@@ -9,8 +9,11 @@ package gnet
 
 import (
 	"errors"
+	"os"
+	"os/signal"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -19,25 +22,19 @@ const (
 	commandBufferSize = 512
 )
 
-var (
-	errClosing    = errors.New("closing")
-	errCloseConns = errors.New("close conns")
-)
-
 type server struct {
-	ln               *listener          // all the listeners
-	cond             *sync.Cond         // shutdown signaler
-	opts             *Options           // options with server
-	serr             error              // signal error
-	once             sync.Once          // make sure only signalShutdown once
-	codec            ICodec             // codec for TCP stream
-	loopWG           sync.WaitGroup     // loop close WaitGroup
-	logger           Logger             // customized logger for logging info
-	ticktock         chan time.Duration // ticker channel
-	listenerWG       sync.WaitGroup     // listener close WaitGroup
-	eventHandler     EventHandler       // user eventHandler
-	subLoopGroup     IEventLoopGroup    // loops for handling events
-	subLoopGroupSize int                // number of loops
+	ln           *listener          // all the listeners
+	cond         *sync.Cond         // shutdown signaler
+	opts         *Options           // options with server
+	serr         error              // signal error
+	once         sync.Once          // make sure only signalShutdown once
+	codec        ICodec             // codec for TCP stream
+	loopWG       sync.WaitGroup     // loop close WaitGroup
+	logger       Logger             // customized logger for logging info
+	ticktock     chan time.Duration // ticker channel
+	listenerWG   sync.WaitGroup     // listener close WaitGroup
+	eventHandler EventHandler       // user eventHandler
+	subLoopGroup IEventLoopGroup    // loops for handling events
 }
 
 // waitForShutdown waits for a signal to shutdown.
@@ -79,8 +76,7 @@ func (svr *server) startLoops(numEventLoop int) {
 		}
 		svr.subLoopGroup.register(el)
 	}
-	svr.subLoopGroupSize = svr.subLoopGroup.len()
-	svr.loopWG.Add(svr.subLoopGroupSize)
+	svr.loopWG.Add(svr.subLoopGroup.len())
 	svr.subLoopGroup.iterate(func(i int, el *eventloop) bool {
 		go el.loopRun()
 		return true
@@ -97,7 +93,7 @@ func (svr *server) stop() {
 
 	// Notify all loops to close.
 	svr.subLoopGroup.iterate(func(i int, el *eventloop) bool {
-		el.ch <- errClosing
+		el.ch <- errServerShutdown
 		return true
 	})
 
@@ -105,9 +101,9 @@ func (svr *server) stop() {
 	svr.loopWG.Wait()
 
 	// Close all connections.
-	svr.loopWG.Add(svr.subLoopGroupSize)
+	svr.loopWG.Add(svr.subLoopGroup.len())
 	svr.subLoopGroup.iterate(func(i int, el *eventloop) bool {
-		el.ch <- errCloseConns
+		el.ch <- errServerShutdown
 		return true
 	})
 	svr.loopWG.Wait()
@@ -165,6 +161,18 @@ func serve(eventHandler EventHandler, listener *listener, options *Options) (err
 	case Shutdown:
 		return
 	}
+	defer svr.eventHandler.OnShutdown(server)
+
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	defer close(shutdown)
+
+	go func() {
+		if <-shutdown == nil {
+			return
+		}
+		svr.signalShutdown(errors.New("caught OS signal"))
+	}()
 
 	// Start all loops.
 	svr.startLoops(numEventLoop)
