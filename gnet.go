@@ -65,7 +65,7 @@ type Server struct {
 
 // CountConnections counts the number of currently active connections and returns it.
 func (s Server) CountConnections() (count int) {
-	s.svr.subLoopGroup.iterate(func(i int, el *eventloop) bool {
+	s.svr.subEventLoopSet.iterate(func(i int, el *eventloop) bool {
 		count += int(el.loadConnCount())
 		return true
 	})
@@ -224,7 +224,7 @@ func (es *EventServer) Tick() (delay time.Duration, action Action) {
 //  unix  - Unix Domain Socket
 //
 // The "tcp" network scheme is assumed when one is not specified.
-func Serve(eventHandler EventHandler, addr string, opts ...Option) error {
+func Serve(eventHandler EventHandler, addr string, opts ...Option) (err error) {
 	var ln listener
 	defer func() {
 		ln.close()
@@ -240,47 +240,53 @@ func Serve(eventHandler EventHandler, addr string, opts ...Option) error {
 	}
 
 	ln.network, ln.addr = parseAddr(addr)
-	if ln.network == "unix" {
-		sniffErrorAndLog(os.RemoveAll(ln.addr))
-		if runtime.GOOS == "windows" {
-			return ErrProtocolNotSupported
-		}
-	}
-	var err error
-	if ln.network == "udp" {
-		if options.ReusePort && runtime.GOOS != "windows" {
+	switch ln.network {
+	case "udp", "udp4", "udp6":
+		if options.ReusePort {
 			ln.pconn, err = netpoll.ReusePortListenPacket(ln.network, ln.addr)
 		} else {
 			ln.pconn, err = net.ListenPacket(ln.network, ln.addr)
 		}
-	} else {
-		if options.ReusePort && runtime.GOOS != "windows" {
+	case "unix":
+		sniffErrorAndLog(os.RemoveAll(ln.addr))
+		if runtime.GOOS == "windows" {
+			err = ErrProtocolNotSupported
+			break
+		}
+		fallthrough
+	case "tcp", "tcp4", "tcp6":
+		if options.ReusePort {
 			ln.ln, err = netpoll.ReusePortListen(ln.network, ln.addr)
 		} else {
 			ln.ln, err = net.Listen(ln.network, ln.addr)
 		}
+	default:
+		err = ErrProtocolNotSupported
 	}
 	if err != nil {
-		return err
+		return
 	}
+
 	if ln.pconn != nil {
 		ln.lnaddr = ln.pconn.LocalAddr()
 	} else {
 		ln.lnaddr = ln.ln.Addr()
 	}
-	if err := ln.system(); err != nil {
-		return err
+
+	if err = ln.renormalize(); err != nil {
+		return
 	}
+
 	return serve(eventHandler, &ln, options)
 }
 
 func parseAddr(addr string) (network, address string) {
 	network = "tcp"
-	address = addr
+	address = strings.ToLower(addr)
 	if strings.Contains(address, "://") {
-		parts := strings.Split(address, "://")
-		network = parts[0]
-		address = parts[1]
+		pair := strings.Split(address, "://")
+		network = pair[0]
+		address = pair[1]
 	}
 	return
 }
